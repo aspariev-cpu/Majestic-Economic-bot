@@ -1,1 +1,2 @@
-# Majestic-Economic-bot
+# majestic-bot
+
