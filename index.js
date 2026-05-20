@@ -332,6 +332,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ===================== ВЫДАТЬ / ОТКАЗАТЬ =====================
+// ===================== ВЫДАТЬ / ОТКАЗАТЬ =====================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   if (!interaction.customId.startsWith('approve_') && !interaction.customId.startsWith('deny_')) return;
@@ -341,7 +342,12 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   const member = interaction.guild.members.cache.get(interaction.user.id);
-  if (!member || !member.roles.cache.has(LEADER_ROLE_ID)) {
+  
+  // ========= ПРОВЕРКА ПРАВ: ЛИДЕР ИЛИ @HIGH (ТОЛЬКО ДЛЯ ТИКЕТОВ) =========
+  const hasLeaderRole = member.roles.cache.has(LEADER_ROLE_ID);
+  const hasHighRole = member.roles.cache.has(TICKET_NOTIFY_ROLE_ID);
+  
+  if (!hasLeaderRole && !hasHighRole) {
     return interaction.reply({ content: '❌ У вас нет прав для этого!', ephemeral: true });
   }
 
@@ -412,7 +418,6 @@ client.on('interactionCreate', async (interaction) => {
     tickets.delete(channelId);
   }, 5000);
 });
-
 // ===================== ОБРАБОТКА СЛЭШ-КОМАНД =====================
 client.on('interactionCreate', async (i) => {
   if (!i.isChatInputCommand()) return;
