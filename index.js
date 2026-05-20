@@ -47,11 +47,13 @@ const SHOP_LOG_CHANNEL_ID = process.env.SHOP_LOG_CHANNEL_ID;
 const NOTIFY_ROLE_ID = process.env.NOTIFY_ROLE_ID;
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID;
 const TICKET_MODERATION_CHANNEL_ID = process.env.TICKET_MODERATION_CHANNEL_ID;
+const TICKET_NOTIFY_ROLE_ID = process.env.TICKET_NOTIFY_ROLE_ID;  // ← ДОБАВЛЕНО
 
 if (!LEADER_ROLE_ID) console.warn("⚠️ LEADER_ROLE_ID не указан");
 if (!SHOP_LOG_CHANNEL_ID) console.warn("⚠️ SHOP_LOG_CHANNEL_ID не указан");
 if (!TICKET_CATEGORY_ID) console.warn("⚠️ TICKET_CATEGORY_ID не указан");
 if (!TICKET_MODERATION_CHANNEL_ID) console.warn("⚠️ TICKET_MODERATION_CHANNEL_ID не указан");
+if (!TICKET_NOTIFY_ROLE_ID) console.warn("⚠️ TICKET_NOTIFY_ROLE_ID не указан (тег роли не работает)");
 
 // ===================== НАСТРОЙКИ ВОЙСА =====================
 const VOICE_REWARD = 100;
@@ -114,6 +116,9 @@ client.once('ready', async () => {
   console.log(`✅ Онлайн: ${client.user.tag}`);
   await register();
   console.log(`🎧 Войс-награда: ${VOICE_REWARD}$ каждую минуту (нужно 2+ человека)`);
+  if (TICKET_NOTIFY_ROLE_ID) {
+    console.log(`🔔 Уведомления в тикетах будут тегать роль: ${TICKET_NOTIFY_ROLE_ID}`);
+  }
 });
 
 function addUser(id) {
@@ -250,8 +255,7 @@ client.on('interactionCreate', async (interaction) => {
   await interaction.editReply({ content: `✅ Тикет создан: ${channel}`, ephemeral: true });
 });
 
-// ===================== ОБРАБОТКА СКРИНШОТА (ОТПРАВКА В КАНАЛ МОДЕРАЦИИ) =====================
-// ===================== ОБРАБОТКА СКРИНШОТА (ПЕРЕСЫЛКА ФАЙЛА) =====================
+// ===================== ОБРАБОТКА СКРИНШОТА (С ТЕГОМ РОЛИ) =====================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   
@@ -266,8 +270,13 @@ client.on('messageCreate', async (message) => {
   tickets.set(message.channel.id, ticket);
 
   // Скачиваем файл
-  const imageResponse = await fetch(attachment.url);
-  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+  let imageBuffer = null;
+  try {
+    const imageResponse = await fetch(attachment.url);
+    imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+  } catch (err) {
+    console.error("Ошибка скачивания изображения:", err);
+  }
   
   await message.delete();
 
@@ -297,11 +306,21 @@ client.on('messageCreate', async (message) => {
       .setStyle(ButtonStyle.Danger)
   );
 
-  await modChannel.send({
-    embeds: [embed],
-    components: [row],
-    files: [{ attachment: imageBuffer, name: 'screenshot.png' }]
-  });
+  // ========= ТЕГ РОЛИ TICKET_NOTIFY_ROLE_ID =========
+  if (TICKET_NOTIFY_ROLE_ID) {
+    await modChannel.send({ 
+      content: `<@&${TICKET_NOTIFY_ROLE_ID}>, 📸 **Новая заявка на выдачу!**`,
+      embeds: [embed], 
+      components: [row],
+      files: imageBuffer ? [{ attachment: imageBuffer, name: 'screenshot.png' }] : []
+    });
+  } else {
+    await modChannel.send({ 
+      embeds: [embed], 
+      components: [row],
+      files: imageBuffer ? [{ attachment: imageBuffer, name: 'screenshot.png' }] : []
+    });
+  }
 
   const waitingEmbed = new EmbedBuilder()
     .setColor(0x2b2d31)
