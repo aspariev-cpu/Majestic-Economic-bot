@@ -23,7 +23,8 @@ const db = new sqlite3.Database('./database.sqlite');
 db.run(`
 CREATE TABLE IF NOT EXISTS users (
   userId TEXT PRIMARY KEY,
-  balance INTEGER DEFAULT 0
+  balance INTEGER DEFAULT 0,
+  playerTag TEXT
 )`, (err) => {
   if (err) console.error("❌ Ошибка users:", err.message);
   else console.log("✅ Таблица users готова");
@@ -99,6 +100,13 @@ const commands = [
     options: [
       { name: 'сумма', type: 4, required: true, description: 'Сумма пополнения' }
     ]
+  },
+  {
+    name: 'сеттег',
+    description: 'Установить свой игровой тег',
+    options: [
+      { name: 'тег', type: 3, required: true, description: 'Ваш игровой тег (например: Pehota_Leo | 45618)' }
+    ]
   }
 ];
 
@@ -117,10 +125,22 @@ client.once('ready', async () => {
   console.log(`✅ Онлайн: ${client.user.tag}`);
   await register();
   console.log(`🎧 Войс-награда: ${VOICE_REWARD}$ каждую минуту (нужно 2+ человека)`);
+  if (NOTIFY_ROLE_ID) console.log(`🔔 Уведомления в тикетах будут тегать роль: ${NOTIFY_ROLE_ID}`);
 });
 
 function addUser(id) {
   db.run(`INSERT OR IGNORE INTO users (userId, balance) VALUES (?, 0)`, [id]);
+}
+
+// Функция получения игрового тега
+function getDisplayName(userId, userTag, callback) {
+  db.get(`SELECT playerTag FROM users WHERE userId = ?`, [userId], (err, row) => {
+    if (row && row.playerTag) {
+      callback(row.playerTag);
+    } else {
+      callback(userTag);
+    }
+  });
 }
 
 // ===================== ВОЙС-СИСТЕМА =====================
@@ -298,11 +318,20 @@ client.on('messageCreate', async (message) => {
       .setStyle(ButtonStyle.Danger)
   );
 
-  await modChannel.send({
-    embeds: [embed],
-    components: [row],
-    files: [{ attachment: imageBuffer, name: 'screenshot.png' }]
-  });
+  if (NOTIFY_ROLE_ID) {
+    await modChannel.send({ 
+      content: `<@&${NOTIFY_ROLE_ID}>, 📸 **Новая заявка на выдачу!**`,
+      embeds: [embed], 
+      components: [row],
+      files: [{ attachment: imageBuffer, name: 'screenshot.png' }]
+    });
+  } else {
+    await modChannel.send({ 
+      embeds: [embed], 
+      components: [row],
+      files: [{ attachment: imageBuffer, name: 'screenshot.png' }]
+    });
+  }
 
   const waitingEmbed = new EmbedBuilder()
     .setColor(0x2b2d31)
@@ -406,7 +435,7 @@ client.on('interactionCreate', async (interaction) => {
 
   const amountInput = new TextInputBuilder()
     .setCustomId('amount')
-    .setLabel('Сумма для списания')
+    .setLabel('Сумма для покупки')
     .setStyle(TextInputStyle.Short)
     .setPlaceholder('Например: 5000')
     .setRequired(true);
@@ -440,13 +469,28 @@ client.on('interactionCreate', async (interaction) => {
 
     db.run(`UPDATE users SET balance = balance - ? WHERE userId = ?`, [amount, interaction.user.id]);
 
-    const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
-    if (shopLogChannel) {
-      shopLogChannel.send(`🛒 **${interaction.user.tag}** списал **${amount}$** через "Свою сумму"`);
-    }
+    getDisplayName(interaction.user.id, interaction.user.tag, async (displayName) => {
+      const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
+      const highRoleId = NOTIFY_ROLE_ID;
+      
+      if (shopLogChannel && highRoleId) {
+        try {
+          await shopLogChannel.send({
+            content: `<@&${highRoleId}>, 🛒 **${displayName}** купил товар: \`Кастомная сумма (${amount}$)\` за **${amount}$**\n💰 Деньги списаны.`,
+            allowedMentions: { roles: [highRoleId] }
+          });
+        } catch (err) {
+          console.error("❌ Ошибка отправки уведомления:", err);
+        }
+      } else if (shopLogChannel) {
+        await shopLogChannel.send({
+          content: `🛒 **${displayName}** купил товар: \`Кастомная сумма (${amount}$)\` за **${amount}$**\n💰 Деньги списаны.`
+        });
+      }
+    });
 
     interaction.reply({ 
-      content: `✅ Вы списали **${amount}$** с баланса!`, 
+      content: `✅ Вы успешно купили кастомную сумму за **${amount}$**!`, 
       ephemeral: true 
     });
   });
@@ -463,6 +507,12 @@ client.on('interactionCreate', async (i) => {
         db.get(`SELECT balance FROM users WHERE userId = ?`, [i.user.id], (e, r) => {
           i.reply({ content: `💰 Баланс: ${r?.balance || 0}$`, flags: MessageFlags.Ephemeral });
         });
+        break;
+
+      case 'сеттег':
+        const playerTag = i.options.getString('тег');
+        db.run(`UPDATE users SET playerTag = ? WHERE userId = ?`, [playerTag, i.user.id]);
+        i.reply({ content: `✅ Ваш игровой тег установлен: **${playerTag}**`, flags: MessageFlags.Ephemeral });
         break;
 
       case 'банк':
@@ -587,19 +637,25 @@ client.on('interactionCreate', async (i) => {
 
     db.run(`UPDATE users SET balance = balance - ? WHERE userId = ?`, [price, i.user.id]);
 
-    const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
-    const highRoleId = NOTIFY_ROLE_ID;
-    
-    if (shopLogChannel && highRoleId) {
-      try {
+    getDisplayName(i.user.id, i.user.tag, async (displayName) => {
+      const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
+      const highRoleId = NOTIFY_ROLE_ID;
+      
+      if (shopLogChannel && highRoleId) {
+        try {
+          await shopLogChannel.send({
+            content: `<@&${highRoleId}>, 🛒 **${displayName}** купил товар: \`${i.customId}\` за **${price}$**\n💰 Деньги списаны.`,
+            allowedMentions: { roles: [highRoleId] }
+          });
+        } catch (err) {
+          console.error("❌ Ошибка отправки уведомления:", err);
+        }
+      } else if (shopLogChannel) {
         await shopLogChannel.send({
-          content: `<@&${highRoleId}>, 🛒 **${i.user.tag}** купил товар: \`${i.customId}\` за **${price}$**\n💰 Деньги списаны.`,
-          allowedMentions: { roles: [highRoleId] }
+          content: `🛒 **${displayName}** купил товар: \`${i.customId}\` за **${price}$**\n💰 Деньги списаны.`
         });
-      } catch (err) {
-        console.error("❌ Ошибка отправки уведомления:", err);
       }
-    }
+    });
 
     i.editReply({ content: `✅ Вы купили предмет за ${price}$.`, flags: MessageFlags.Ephemeral });
   });
