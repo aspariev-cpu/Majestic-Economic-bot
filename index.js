@@ -9,7 +9,10 @@ const {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
-  EmbedBuilder
+  EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 
 const sqlite3 = require('sqlite3').verbose();
@@ -47,13 +50,11 @@ const SHOP_LOG_CHANNEL_ID = process.env.SHOP_LOG_CHANNEL_ID;
 const NOTIFY_ROLE_ID = process.env.NOTIFY_ROLE_ID;
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID;
 const TICKET_MODERATION_CHANNEL_ID = process.env.TICKET_MODERATION_CHANNEL_ID;
-const TICKET_NOTIFY_ROLE_ID = process.env.TICKET_NOTIFY_ROLE_ID;  // ← ДОБАВЛЕНО
 
 if (!LEADER_ROLE_ID) console.warn("⚠️ LEADER_ROLE_ID не указан");
 if (!SHOP_LOG_CHANNEL_ID) console.warn("⚠️ SHOP_LOG_CHANNEL_ID не указан");
 if (!TICKET_CATEGORY_ID) console.warn("⚠️ TICKET_CATEGORY_ID не указан");
 if (!TICKET_MODERATION_CHANNEL_ID) console.warn("⚠️ TICKET_MODERATION_CHANNEL_ID не указан");
-if (!TICKET_NOTIFY_ROLE_ID) console.warn("⚠️ TICKET_NOTIFY_ROLE_ID не указан (тег роли не работает)");
 
 // ===================== НАСТРОЙКИ ВОЙСА =====================
 const VOICE_REWARD = 100;
@@ -116,9 +117,6 @@ client.once('ready', async () => {
   console.log(`✅ Онлайн: ${client.user.tag}`);
   await register();
   console.log(`🎧 Войс-награда: ${VOICE_REWARD}$ каждую минуту (нужно 2+ человека)`);
-  if (TICKET_NOTIFY_ROLE_ID) {
-    console.log(`🔔 Уведомления в тикетах будут тегать роль: ${TICKET_NOTIFY_ROLE_ID}`);
-  }
 });
 
 function addUser(id) {
@@ -255,7 +253,7 @@ client.on('interactionCreate', async (interaction) => {
   await interaction.editReply({ content: `✅ Тикет создан: ${channel}`, ephemeral: true });
 });
 
-// ===================== ОБРАБОТКА СКРИНШОТА (С ТЕГОМ РОЛИ) =====================
+// ===================== ОБРАБОТКА СКРИНШОТА =====================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   
@@ -269,14 +267,8 @@ client.on('messageCreate', async (message) => {
   ticket.status = 'ready';
   tickets.set(message.channel.id, ticket);
 
-  // Скачиваем файл
-  let imageBuffer = null;
-  try {
-    const imageResponse = await fetch(attachment.url);
-    imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-  } catch (err) {
-    console.error("Ошибка скачивания изображения:", err);
-  }
+  const imageResponse = await fetch(attachment.url);
+  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
   
   await message.delete();
 
@@ -306,21 +298,11 @@ client.on('messageCreate', async (message) => {
       .setStyle(ButtonStyle.Danger)
   );
 
-  // ========= ТЕГ РОЛИ TICKET_NOTIFY_ROLE_ID =========
-  if (TICKET_NOTIFY_ROLE_ID) {
-    await modChannel.send({ 
-      content: `<@&${TICKET_NOTIFY_ROLE_ID}>, 📸 **Новая заявка на выдачу!**`,
-      embeds: [embed], 
-      components: [row],
-      files: imageBuffer ? [{ attachment: imageBuffer, name: 'screenshot.png' }] : []
-    });
-  } else {
-    await modChannel.send({ 
-      embeds: [embed], 
-      components: [row],
-      files: imageBuffer ? [{ attachment: imageBuffer, name: 'screenshot.png' }] : []
-    });
-  }
+  await modChannel.send({
+    embeds: [embed],
+    components: [row],
+    files: [{ attachment: imageBuffer, name: 'screenshot.png' }]
+  });
 
   const waitingEmbed = new EmbedBuilder()
     .setColor(0x2b2d31)
@@ -332,7 +314,6 @@ client.on('messageCreate', async (message) => {
 });
 
 // ===================== ВЫДАТЬ / ОТКАЗАТЬ =====================
-// ===================== ВЫДАТЬ / ОТКАЗАТЬ =====================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   if (!interaction.customId.startsWith('approve_') && !interaction.customId.startsWith('deny_')) return;
@@ -342,12 +323,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   const member = interaction.guild.members.cache.get(interaction.user.id);
-  
-  // ========= ПРОВЕРКА ПРАВ: ЛИДЕР ИЛИ @HIGH (ТОЛЬКО ДЛЯ ТИКЕТОВ) =========
-  const hasLeaderRole = member.roles.cache.has(LEADER_ROLE_ID);
-  const hasHighRole = member.roles.cache.has(TICKET_NOTIFY_ROLE_ID);
-  
-  if (!hasLeaderRole && !hasHighRole) {
+  if (!member || !member.roles.cache.has(LEADER_ROLE_ID)) {
     return interaction.reply({ content: '❌ У вас нет прав для этого!', ephemeral: true });
   }
 
@@ -418,6 +394,64 @@ client.on('interactionCreate', async (interaction) => {
     tickets.delete(channelId);
   }, 5000);
 });
+
+// ===================== ОБРАБОТКА КНОПКИ "СВОЯ СУММА" =====================
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (interaction.customId !== 'custom_amount') return;
+
+  const modal = new ModalBuilder()
+    .setCustomId('custom_amount_modal')
+    .setTitle('💸 Введите сумму');
+
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount')
+    .setLabel('Сумма для списания')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Например: 5000')
+    .setRequired(true);
+
+  const row = new ActionRowBuilder().addComponents(amountInput);
+  modal.addComponents(row);
+
+  await interaction.showModal(modal);
+});
+
+// ===================== ОБРАБОТКА МОДАЛЬНОГО ОКНА =====================
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isModalSubmit()) return;
+  if (interaction.customId !== 'custom_amount_modal') return;
+
+  const amount = parseInt(interaction.fields.getTextInputValue('amount'));
+  
+  if (isNaN(amount) || amount <= 0) {
+    return interaction.reply({ content: '❌ Введите корректную сумму!', ephemeral: true });
+  }
+
+  addUser(interaction.user.id);
+  
+  db.get(`SELECT balance FROM users WHERE userId = ?`, [interaction.user.id], async (err, row) => {
+    if (err || !row || row.balance < amount) {
+      return interaction.reply({ 
+        content: `❌ Недостаточно денег! Ваш баланс: ${row?.balance || 0}$`, 
+        ephemeral: true 
+      });
+    }
+
+    db.run(`UPDATE users SET balance = balance - ? WHERE userId = ?`, [amount, interaction.user.id]);
+
+    const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
+    if (shopLogChannel) {
+      shopLogChannel.send(`🛒 **${interaction.user.tag}** списал **${amount}$** через "Свою сумму"`);
+    }
+
+    interaction.reply({ 
+      content: `✅ Вы списали **${amount}$** с баланса!`, 
+      ephemeral: true 
+    });
+  });
+});
+
 // ===================== ОБРАБОТКА СЛЭШ-КОМАНД =====================
 client.on('interactionCreate', async (i) => {
   if (!i.isChatInputCommand()) return;
@@ -506,7 +540,13 @@ client.on('interactionCreate', async (i) => {
           new ButtonBuilder().setCustomId('buy_Дефик').setLabel('🛡️ Дефик 150000$').setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId('buy_Мушкет').setLabel('🔫 Мушкет 180000$').setStyle(ButtonStyle.Success)
         );
-        i.reply({ content: "🛒 МАГАЗИН", components: [row1, row2], flags: MessageFlags.Ephemeral });
+        const row3 = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('custom_amount')
+            .setLabel('💸 Ввести свою сумму')
+            .setStyle(ButtonStyle.Secondary)
+        );
+        i.reply({ content: "🛒 МАГАЗИН", components: [row1, row2, row3], flags: MessageFlags.Ephemeral });
         break;
 
       case 'топ':
@@ -525,7 +565,7 @@ client.on('interactionCreate', async (i) => {
   }
 });
 
-// ===================== КНОПКИ МАГАЗИНА =====================
+// ===================== КНОПКИ МАГАЗИНА (ОСТАЛЬНЫЕ) =====================
 client.on('interactionCreate', async (i) => {
   if (!i.isButton()) return;
   
