@@ -125,6 +125,7 @@ client.once('ready', async () => {
   console.log(`✅ Онлайн: ${client.user.tag}`);
   await register();
   console.log(`🎧 Войс-награда: ${VOICE_REWARD}$ каждую минуту (нужно 2+ человека)`);
+  if (NOTIFY_ROLE_ID) console.log(`🔔 Уведомления будут тегать роль: ${NOTIFY_ROLE_ID}`);
 });
 
 function addUser(id) {
@@ -470,13 +471,21 @@ client.on('interactionCreate', async (interaction) => {
 
     getDisplayName(interaction.user.id, interaction.user.tag, async (displayName) => {
       const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
+      const highRoleId = NOTIFY_ROLE_ID;
       
       if (shopLogChannel) {
         try {
-          await shopLogChannel.send({
-            content: `🛒 **${displayName}** (<@${interaction.user.id}>) купил товар: \`Кастомная сумма (${amount}$)\` за **${amount}$**\n💰 Деньги списаны.`,
-            allowedMentions: { users: [interaction.user.id] }
-          });
+          if (highRoleId) {
+            await shopLogChannel.send({
+              content: `<@&${highRoleId}>, 🛒 **${displayName}** (<@${interaction.user.id}>) купил товар: \`Кастомная сумма (${amount}$)\` за **${amount}$**\n💰 Деньги списаны.`,
+              allowedMentions: { roles: [highRoleId], users: [interaction.user.id] }
+            });
+          } else {
+            await shopLogChannel.send({
+              content: `🛒 **${displayName}** (<@${interaction.user.id}>) купил товар: \`Кастомная сумма (${amount}$)\` за **${amount}$**\n💰 Деньги списаны.`,
+              allowedMentions: { users: [interaction.user.id] }
+            });
+          }
         } catch (err) {
           console.error("❌ Ошибка отправки уведомления:", err);
         }
@@ -633,13 +642,21 @@ client.on('interactionCreate', async (i) => {
 
     getDisplayName(i.user.id, i.user.tag, async (displayName) => {
       const shopLogChannel = client.channels.cache.get(SHOP_LOG_CHANNEL_ID);
+      const highRoleId = NOTIFY_ROLE_ID;
       
       if (shopLogChannel) {
         try {
-          await shopLogChannel.send({
-            content: `🛒 **${displayName}** (<@${i.user.id}>) купил товар: \`${i.customId}\` за **${price}$**\n💰 Деньги списаны.`,
-            allowedMentions: { users: [i.user.id] }
-          });
+          if (highRoleId) {
+            await shopLogChannel.send({
+              content: `<@&${highRoleId}>, 🛒 **${displayName}** (<@${i.user.id}>) купил товар: \`${i.customId}\` за **${price}$**\n💰 Деньги списаны.`,
+              allowedMentions: { roles: [highRoleId], users: [i.user.id] }
+            });
+          } else {
+            await shopLogChannel.send({
+              content: `🛒 **${displayName}** (<@${i.user.id}>) купил товар: \`${i.customId}\` за **${price}$**\n💰 Деньги списаны.`,
+              allowedMentions: { users: [i.user.id] }
+            });
+          }
         } catch (err) {
           console.error("❌ Ошибка отправки уведомления:", err);
         }
